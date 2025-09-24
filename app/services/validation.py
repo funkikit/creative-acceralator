@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import asyncio
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -8,6 +10,7 @@ from app.models.schemas import EvaluationOut, PersonaConfig, PersonaSpec, Scores
 from app.utils.llm_client import LLMClient
 from app.utils.sampler import build_persona_summary, sample_personas
 import structlog
+from app.api.state import state
 
 
 _BASE_PERSONA_KEYS = {"id", "gender", "age_band", "region", "background", "familiarity", "summary"}
@@ -89,6 +92,7 @@ class ValidationService:
         self.prompt_dir = prompt_dir
         self.seed_csv = seed_csv
         self.log = structlog.get_logger(__name__).bind(service="validation")
+        self.max_concurrency = max(1, int(os.getenv("VALIDATION_MAX_CONCURRENCY", "4")))
 
     @staticmethod
     def from_specs(specs: List[PersonaSpec]) -> List[PersonaConfig]:
@@ -206,9 +210,85 @@ class ValidationService:
         else:
             personas_raw = sample_personas(n_personas, self.seed_csv)
             personas = [_dict_to_config(p) for p in personas_raw]
-        results: List[EvaluationOut] = []
-        for img in image_list:
-            for p in personas:
-                r = await self._validate_one(p, img)
-                results.append(r)
-        return results
+
+        total_tasks = len(image_list) * len(personas)
+        state.validation_progress = {
+            "status": "running" if total_tasks else "complete",
+            "total": total_tasks,
+            "completed": 0,
+            "message": None,
+        }
+
+        self.log.info(
+            "validation_run_start",
+            total=total_tasks,
+            images=len(image_list),
+            personas=len(personas),
+            concurrency=self.max_concurrency,
+        )
+
+        if total_tasks == 0:
+            self.log.info("validation_run_no_tasks")
+            return []
+
+        semaphore = asyncio.Semaphore(self.max_concurrency)
+        lock = asyncio.Lock()
+        progress = {"completed": 0}
+        log_every = max(1, total_tasks // 5)
+
+        async def evaluate(persona: PersonaConfig, image_meta: Dict) -> EvaluationOut:
+            try:
+                async with semaphore:
+                    result = await self._validate_one(persona, image_meta)
+                return result
+            finally:
+                async with lock:
+                    progress["completed"] += 1
+                    completed = progress["completed"]
+                    status = "running" if completed < total_tasks else "complete"
+                    state.validation_progress = {
+                        "status": status,
+                        "total": total_tasks,
+                        "completed": completed,
+                        "message": None,
+                    }
+                    if completed % log_every == 0 or completed == total_tasks:
+                        self.log.info(
+                            "validation_progress",
+                            completed=completed,
+                            total=total_tasks,
+                            persona_id=persona.id,
+                            image_id=image_meta.get("id"),
+                        )
+
+        tasks = [
+            evaluate(persona, image_meta)
+            for image_meta in image_list
+            for persona in personas
+        ]
+
+        try:
+            results = await asyncio.gather(*tasks)
+        except Exception as exc:
+            self.log.error(
+                "validation_run_error",
+                error=str(exc),
+                completed=progress["completed"],
+                total=total_tasks,
+            )
+            state.validation_progress = {
+                "status": "error",
+                "total": total_tasks,
+                "completed": progress["completed"],
+                "message": str(exc),
+            }
+            raise
+
+        state.validation_progress = {
+            "status": "complete",
+            "total": total_tasks,
+            "completed": total_tasks,
+            "message": None,
+        }
+        self.log.info("validation_run_complete", total=total_tasks)
+        return list(results)

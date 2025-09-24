@@ -6,6 +6,7 @@ import pathlib
 import uuid
 
 import asyncio
+from typing import Any, Dict, Optional
 
 
 class GeminiImageClient:
@@ -15,32 +16,29 @@ class GeminiImageClient:
         self.static_dir = pathlib.Path(os.getenv("STATIC_DIR", "tmp"))
         self.static_dir.mkdir(parents=True, exist_ok=True)
 
-    async def generate_png(self, prompt: str) -> str:
+    async def generate_png(self, prompt: str, reference: Optional[Any] = None) -> str:
+        placeholder_png = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQABJ2kq0QAAAABJRU5ErkJggg=="
+        )
+        ref = self._normalize_reference(reference)
+
         # Development fallback: if IMAGE_FAKE=1, create a placeholder PNG locally.
         if os.getenv("IMAGE_FAKE", "").lower() in {"1", "true", "yes"}:
-            # 1x1 transparent PNG
-            tiny_png_b64 = (
-                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQAB"
-                "J2kq0QAAAABJRU5ErkJggg=="
-            )
             img_id = f"img_{uuid.uuid4().hex[:8]}"
             out = self.static_dir / f"{img_id}.png"
-            out.write_bytes(base64.b64decode(tiny_png_b64))
+            out.write_bytes(ref["data"] if ref else placeholder_png)
             return str(out.resolve())
 
         if not self.api_key:
             # Fallback to placeholder if key is missing (dev-friendly default)
             img_id = f"img_{uuid.uuid4().hex[:8]}"
             out = self.static_dir / f"{img_id}.png"
-            # 1x1 transparent PNG
-            out.write_bytes(base64.b64decode(
-                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQABJ2kq0QAAAABJRU5ErkJggg=="
-            ))
+            out.write_bytes(ref["data"] if ref else placeholder_png)
             return str(out.resolve())
 
-        return await self._generate_via_gemini(prompt)
+        return await self._generate_via_gemini(prompt, ref)
 
-    async def _generate_via_gemini(self, prompt: str) -> str:
+    async def _generate_via_gemini(self, prompt: str, reference: Optional[Dict[str, Any]]) -> str:
         if not self.api_key:
             raise RuntimeError("GEMINI_API_KEY is not configured.")
 
@@ -54,9 +52,21 @@ class GeminiImageClient:
 
             client = genai.Client(api_key=self.api_key)
             try:
+                if reference:
+                    contents = [
+                        {
+                            "role": "user",
+                            "parts": [
+                                {"inline_data": {"mime_type": reference["mime_type"], "data": reference["data"]}},
+                                {"text": prompt},
+                            ],
+                        }
+                    ]
+                else:
+                    contents = prompt
                 response = client.models.generate_content(
                     model=self.model,
-                    contents=prompt,
+                    contents=contents,
                 )
             except genai.errors.ClientError as exc:
                 status = getattr(exc, "status_code", None)
@@ -124,3 +134,19 @@ class GeminiImageClient:
         out = self.static_dir / f"{img_id}.png"
         out.write_bytes(raw)
         return str(out.resolve())
+
+    @staticmethod
+    def _normalize_reference(reference: Optional[Any]) -> Optional[Dict[str, Any]]:
+        if reference is None:
+            return None
+        if isinstance(reference, dict):
+            data = reference.get("data")  # type: ignore[arg-type]
+            mime = reference.get("mime_type")  # type: ignore[arg-type]
+        else:
+            data = getattr(reference, "data", None)
+            mime = getattr(reference, "mime_type", None)
+        if not isinstance(data, (bytes, bytearray)):
+            return None
+        if not isinstance(mime, str) or not mime:
+            mime = "image/png"
+        return {"data": bytes(data), "mime_type": mime}

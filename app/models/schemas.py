@@ -62,8 +62,14 @@ class VariationsResponse(BaseModel):
     variations: List[VariationOut]
 
 
+class ReferenceImagePayload(BaseModel):
+    data: str
+    mime_type: str
+
+
 class ImagesRequest(BaseModel):
     variation_ids: List[str]
+    reference_image: Optional[ReferenceImagePayload] = None
 
 
 class ImageOut(BaseModel):
@@ -125,6 +131,13 @@ class ValidateResponse(BaseModel):
 
 class ValidateRequest(BaseModel):
     image_ids: List[str]
-    n_personas: int = Field(100, ge=10, le=300)
+    n_personas: int = Field(100, ge=1, le=300)
     llm: LLMName = "openai"
     personas: Optional[List[PersonaSpec]] = None
+
+
+class ValidationProgress(BaseModel):
+    status: Literal["idle", "initializing", "running", "complete", "error"] = "idle"
+    total: int = 0
+    completed: int = 0
+    message: Optional[str] = None

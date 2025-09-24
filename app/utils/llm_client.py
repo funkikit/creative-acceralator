@@ -12,7 +12,7 @@ class LLMClient:
         self.provider = provider
         self._gemini_model = os.getenv("GEMINI_TEXT_MODEL", "gemini-2.0-flash")
         self._gemini_api_key = os.getenv("GEMINI_API_KEY", "")
-        self._openai_model = os.getenv("OPENAI_TEXT_MODEL", "gpt-4o-mini")
+        self._openai_model = os.getenv("OPENAI_TEXT_MODEL", "gpt-5-nano")
         self._openai_api_key = os.getenv("OPENAI_API_KEY", "")
 
     async def complete(self, system: str, user: str) -> str:

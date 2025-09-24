@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   API_BASE,
   fetchVariationVariables,
@@ -35,12 +35,36 @@ export default function CreativePage() {
   const [images, setImages] = useState<any[]>([]);
   const [loading, setLoading] = useState<string | null>(null);
   const [message, setMessage] = useState<string>("");
+  const [imageProgress, setImageProgress] = useState<{
+    status: "idle" | "running" | "complete" | "error";
+    total: number;
+    completed: number;
+    message?: string | null;
+  }>({ status: "idle", total: 0, completed: 0, message: null });
+  const [imageFailures, setImageFailures] = useState<string[]>([]);
   const [variationCount, setVariationCount] = useState<number>(8);
+  const [referenceImage, setReferenceImage] = useState<
+    | {
+        dataUrl: string;
+        mimeType: string;
+        name: string;
+        size: number;
+      }
+    | null
+  >(null);
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const MAX_REFERENCE_SIZE = 8 * 1024 * 1024; // 8MB
 
   const selectedIds = useMemo(
     () => Object.entries(selected).filter(([, v]) => v).map(([id]) => id),
     [selected]
   );
+
+  const progressPercent =
+    imageProgress.total > 0
+      ? Math.min(100, Math.round((imageProgress.completed / imageProgress.total) * 100))
+      : 0;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -114,6 +138,48 @@ export default function CreativePage() {
     setCustomRows((rows) => rows.filter((_, i) => i !== index));
   };
 
+  const handleReferenceImageChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] ?? null;
+    if (!file) {
+      setReferenceImage(null);
+      return;
+    }
+    if (!file.type.startsWith("image/")) {
+      setMessage("画像ファイルを選択してください");
+      event.target.value = "";
+      return;
+    }
+    if (file.size > MAX_REFERENCE_SIZE) {
+      setMessage("画像サイズが大きすぎます (最大 8MB まで)");
+      event.target.value = "";
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        setReferenceImage({
+          dataUrl: reader.result,
+          mimeType: file.type,
+          name: file.name,
+          size: file.size,
+        });
+      }
+    };
+    reader.onerror = () => {
+      setMessage("画像の読み込みに失敗しました");
+      setReferenceImage(null);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleReferenceImageClear = () => {
+    setReferenceImage(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
   const handleGenerateVariations = async () => {
     setLoading("variations");
     setMessage("");
@@ -160,18 +226,90 @@ export default function CreativePage() {
   };
 
   const handleGenerateImages = async () => {
+    if (!selectedIds.length) {
+      setMessage("少なくとも 1 件のバリエーションを選択してください");
+      setImageProgress({ status: "idle", total: 0, completed: 0, message: null });
+      setImageFailures([]);
+      return;
+    }
+
     setLoading("images");
     setMessage("");
+    setImageFailures([]);
+
     try {
-      if (!selectedIds.length) throw new Error("少なくとも 1 件のバリエーションを選択してください");
-      const response = await generateImages(selectedIds);
-      const mapped = response.images.map((img) => ({
-        ...img,
-        absUrl: img.url.startsWith("http") ? img.url : `${API_BASE}${img.url}`,
-      }));
-      setImages(mapped);
-      setMessage(`${response.images.length} 件の画像を生成しました`);
+      let referencePayload: { data: string; mime_type: string } | undefined;
+      if (referenceImage) {
+        const dataUrl = referenceImage.dataUrl;
+        const base64 = dataUrl.includes(",") ? dataUrl.split(",", 2)[1] : dataUrl;
+        if (!base64) {
+          throw new Error("参照画像の読み込みに失敗しました");
+        }
+        referencePayload = {
+          data: base64,
+          mime_type: referenceImage.mimeType,
+        };
+      }
+
+      const total = selectedIds.length;
+      setImages([]);
+      setImageProgress({ status: "running", total, completed: 0, message: null });
+
+      const collected: any[] = [];
+      const failures: string[] = [];
+
+      for (let index = 0; index < selectedIds.length; index += 1) {
+        const variationId = selectedIds[index];
+        try {
+          const response = await generateImages([variationId], referencePayload ?? null);
+          const mapped = response.images.map((img) => ({
+            ...img,
+            absUrl: img.url.startsWith("http") ? img.url : `${API_BASE}${img.url}`,
+          }));
+          collected.push(...mapped);
+          setImages((prev) => [...prev, ...mapped]);
+        } catch (err) {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          failures.push(`${variationId}: ${errorMessage}`);
+        }
+
+        const completed = index + 1;
+        setImageProgress((prev) => ({
+          status: "running",
+          total: prev.total || total,
+          completed,
+          message: null,
+        }));
+      }
+
+      const successCount = collected.length;
+      const failureCount = failures.length;
+
+      if (failureCount > 0 && successCount === 0) {
+        setImageProgress({
+          status: "error",
+          total,
+          completed: total,
+          message: "すべての画像生成に失敗しました",
+        });
+        setMessage("画像生成に失敗しました。設定や API キーを確認して再試行してください。");
+      } else {
+        setImageProgress({
+          status: "complete",
+          total,
+          completed: total,
+          message: failureCount > 0 ? "一部の画像生成でエラーが発生しました" : null,
+        });
+        if (failureCount > 0) {
+          setMessage(`${successCount} 件の画像を生成しました (失敗: ${failureCount} 件)`);
+        } else {
+          setMessage(`${successCount} 件の画像を生成しました`);
+        }
+      }
+
+      setImageFailures(failures);
     } catch (err) {
+      setImageProgress({ status: "error", total: 0, completed: 0, message: (err as Error).message });
       setMessage((err as Error).message);
     } finally {
       setLoading(null);
@@ -399,6 +537,82 @@ export default function CreativePage() {
               {loading === "images" ? "生成中..." : "選択したバリエーションから画像生成"}
             </button>
             <span className="text-sm text-slate-400">{selectedIds.length} 件が選択されています</span>
+          </div>
+          {imageProgress.status !== "idle" && imageProgress.total > 0 && (
+            <div className="rounded-3xl border border-white/10 bg-slate-900/60 p-4 text-xs text-slate-200">
+              <div className="flex items-center justify-between text-[11px] uppercase tracking-wide">
+                <span className="font-semibold text-white">画像生成の進捗</span>
+                <span className="text-slate-300">
+                  {imageProgress.completed}/{imageProgress.total} ({progressPercent}%)
+                </span>
+              </div>
+              <div className="mt-2 h-2 w-full rounded-full bg-white/10">
+                <div
+                  className={clsx(
+                    "h-2 rounded-full transition-all",
+                    imageProgress.status === "error"
+                      ? "bg-red-400"
+                      : imageProgress.status === "complete"
+                        ? "bg-emerald-400"
+                        : "bg-primary-400"
+                  )}
+                  style={{ width: `${progressPercent}%` }}
+                />
+              </div>
+              {imageProgress.message && (
+                <p className="mt-2 text-[11px] text-amber-200">{imageProgress.message}</p>
+              )}
+            </div>
+          )}
+          {imageFailures.length > 0 && (
+            <div className="rounded-3xl border border-red-400/40 bg-red-500/10 p-4 text-[11px] text-red-100">
+              <p className="font-semibold text-red-200">失敗したバリエーション</p>
+              <ul className="mt-2 space-y-1">
+                {imageFailures.map((failure, index) => (
+                  <li key={`${failure}-${index}`} className="list-inside list-disc">
+                    {failure}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <div className="rounded-3xl border border-white/10 bg-slate-900/60 p-5 text-sm text-slate-200">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-white">参照画像 (任意)</h3>
+                <p className="mt-1 text-xs text-slate-400">
+                  Gemini の Image-to-Image に渡す画像を 1 枚アップロードできます。
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleReferenceImageChange}
+                  className="block w-full cursor-pointer text-xs text-slate-200 file:mr-3 file:rounded-full file:border-0 file:bg-primary-500 file:px-4 file:py-2 file:text-xs file:font-semibold file:text-slate-950 hover:file:brightness-110 md:w-64"
+                />
+                {referenceImage && (
+                  <button
+                    onClick={handleReferenceImageClear}
+                    className="rounded-full border border-white/20 px-3 py-1 text-xs text-slate-200 hover:border-primary-400 hover:text-white"
+                  >
+                    クリア
+                  </button>
+                )}
+              </div>
+            </div>
+            {referenceImage && (
+              <div className="mt-4 flex items-center gap-4">
+                <div className="h-20 w-20 overflow-hidden rounded-2xl border border-white/10">
+                  <img src={referenceImage.dataUrl} alt="reference preview" className="h-full w-full object-cover" />
+                </div>
+                <div className="text-xs text-slate-300">
+                  <p>{referenceImage.name}</p>
+                  <p>{(referenceImage.size / 1024).toFixed(1)} KB</p>
+                </div>
+              </div>
+            )}
           </div>
         </section>
       )}

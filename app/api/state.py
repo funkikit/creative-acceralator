@@ -10,7 +10,7 @@ class AppState:
     images: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     evaluations: List[Dict[str, Any]] = field(default_factory=list)
     evals_for_summary: List[Dict[str, Any]] = field(default_factory=list)
+    validation_progress: Dict[str, Any] = field(default_factory=dict)
 
 
 state = AppState()
-
