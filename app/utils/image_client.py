@@ -47,26 +47,37 @@ class GeminiImageClient:
         def _invoke() -> bytes:
             try:
                 from google import genai
+                from google.genai import types
             except ImportError as exc:  # pragma: no cover - optional dependency
                 raise RuntimeError(
                     "google-genai is not installed. Run 'uv sync' to install dependencies."
                 ) from exc
 
             client = genai.Client(api_key=self.api_key)
-            response = client.models.generate_content(
+            response = client.models.generate_images(
                 model=self.model,
-                contents=[prompt],
+                prompt=prompt,
+                config=types.GenerateImagesConfig(
+                    number_of_images=1,
+                    output_mime_type="image/png",
+                    include_rai_reason=True,
+                    include_safety_attributes=True,
+                ),
             )
 
-            for candidate in response.candidates or []:
-                parts = getattr(candidate.content, "parts", [])
-                for part in parts:
-                    inline = getattr(part, "inline_data", None)
-                    if inline and getattr(inline, "data", None):
-                        data = inline.data
-                        if isinstance(data, bytes):
-                            return data
-                        return base64.b64decode(data)
+            errors = []
+            for generated in response.generated_images or []:
+                image = getattr(generated, "image", None)
+                if image and getattr(image, "image_bytes", None):
+                    return image.image_bytes
+                rai_reason = getattr(generated, "rai_filtered_reason", None)
+                if rai_reason:
+                    errors.append(rai_reason)
+
+            if errors:
+                raise RuntimeError(
+                    "Geminiの安全フィルタにより画像が拒否されました: " + ", ".join(errors)
+                )
             raise RuntimeError("Geminiから画像データが取得できませんでした。")
 
         raw = await asyncio.to_thread(_invoke)

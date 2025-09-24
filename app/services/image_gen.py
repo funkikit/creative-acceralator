@@ -22,7 +22,7 @@ class ImageService:
                     id=f"img_{uuid.uuid4().hex[:8]}",
                     variation_id=vid,
                     url=url,
-                    provider_meta={"model": "gemini-nanobanana"},
+                    provider_meta={"model": self.cli.model},
                 )
             )
         return out
