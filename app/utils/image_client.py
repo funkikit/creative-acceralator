@@ -11,7 +11,7 @@ import asyncio
 class GeminiImageClient:
     def __init__(self) -> None:
         self.api_key = os.environ.get("GEMINI_API_KEY", "")
-        self.model = os.getenv("GEMINI_IMAGE_MODEL", "gemini-nanobanana")
+        self.model = os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-image-preview")
         self.static_dir = pathlib.Path(os.getenv("STATIC_DIR", "tmp"))
         self.static_dir.mkdir(parents=True, exist_ok=True)
 
@@ -47,37 +47,76 @@ class GeminiImageClient:
         def _invoke() -> bytes:
             try:
                 from google import genai
-                from google.genai import types
             except ImportError as exc:  # pragma: no cover - optional dependency
                 raise RuntimeError(
                     "google-genai is not installed. Run 'uv sync' to install dependencies."
                 ) from exc
 
             client = genai.Client(api_key=self.api_key)
-            response = client.models.generate_images(
-                model=self.model,
-                prompt=prompt,
-                config=types.GenerateImagesConfig(
-                    number_of_images=1,
-                    output_mime_type="image/png",
-                    include_rai_reason=True,
-                    include_safety_attributes=True,
-                ),
-            )
-
-            errors = []
-            for generated in response.generated_images or []:
-                image = getattr(generated, "image", None)
-                if image and getattr(image, "image_bytes", None):
-                    return image.image_bytes
-                rai_reason = getattr(generated, "rai_filtered_reason", None)
-                if rai_reason:
-                    errors.append(rai_reason)
-
-            if errors:
-                raise RuntimeError(
-                    "Geminiの安全フィルタにより画像が拒否されました: " + ", ".join(errors)
+            try:
+                response = client.models.generate_content(
+                    model=self.model,
+                    contents=prompt,
                 )
+            except genai.errors.ClientError as exc:
+                status = getattr(exc, "status_code", None)
+                if status == 404:
+                    raise RuntimeError(
+                        "指定されたGeminiモデルが見つかりませんでした。APIキーの権限とモデル名(GEMINI_IMAGE_MODEL)を確認してください。"
+                    ) from exc
+                raise RuntimeError(f"Gemini API呼び出しに失敗しました: {exc}") from exc
+
+            images: list[bytes] = []
+            rai_reasons: list[str] = []
+            safety_flags: list[str] = []
+
+            for candidate in response.candidates or []:
+                for rating in getattr(candidate, "safety_ratings", []) or []:
+                    probability = getattr(rating, "probability", None)
+                    category = getattr(rating, "category", None)
+                    prob_label = getattr(probability, "name", None) or str(probability)
+                    if prob_label.upper() in {"MEDIUM", "HIGH", "VERY_HIGH"}:
+                        safety_flags.append(f"{category}: {prob_label}")
+
+                content = getattr(candidate, "content", None)
+                if not content:
+                    continue
+
+                for part in getattr(content, "parts", []) or []:
+                    inline = getattr(part, "inline_data", None)
+                    if inline and getattr(inline, "data", None):
+                        data = inline.data
+                        if isinstance(data, bytes):
+                            images.append(data)
+                        else:
+                            images.append(base64.b64decode(data))
+                    text = getattr(part, "text", None)
+                    if text:
+                        rai_reasons.append(text)
+
+            if images:
+                return images[0]
+
+            feedback = getattr(response, "prompt_feedback", None)
+            if feedback:
+                block_reason = getattr(feedback, "block_reason", None)
+                if block_reason:
+                    raise RuntimeError(
+                        "Geminiの安全フィードバックにより画像生成がブロックされました: "
+                        f"{block_reason}"
+                    )
+
+            if safety_flags:
+                raise RuntimeError(
+                    "Geminiの安全フィルタにより画像が拒否されました: " + ", ".join(safety_flags)
+                )
+
+            if rai_reasons:
+                raise RuntimeError(
+                    "Geminiから画像が返されず、テキスト応答が返却されました: "
+                    + " | ".join(rai_reasons)
+                )
+
             raise RuntimeError("Geminiから画像データが取得できませんでした。")
 
         raw = await asyncio.to_thread(_invoke)
