@@ -38,8 +38,23 @@ uv run fastapi run app.main:app --reload
 - デフォルト: `http://127.0.0.1:8000`
 - 静的ファイル: `http://127.0.0.1:8000/static/...`
 
-## 4. フロントエンド（任意）
-最小の Streamlit UI を起動:
+## 4. フロントエンド（Next.js UI）
+Next.js ベースの UI は `frontend-next/` にあります。初回は依存をインストールし、環境変数を設定してから起動します。
+
+```
+cd frontend-next
+npm install                       # もしくは uv run -- npm install
+cp .env.example .env.local        # NEXT_PUBLIC_API_BASE_URL, POC_ACCESS_PASSWORD を設定
+npm run dev                       # もしくは uv run -- npm run dev
+```
+
+- ローカル API を利用する場合、`NEXT_PUBLIC_API_BASE_URL` は `http://127.0.0.1:8000` を指定します。
+- `POC_ACCESS_PASSWORD` はバックエンドの `POC_ACCESS_PASSWORD` と揃える必要があります。
+- 開発サーバーは `http://127.0.0.1:4000` で待ち受けます。
+
+### 参考: Streamlit UI（旧検証用）
+簡易検証用の Streamlit アプリも残しています。
+
 ```
 uv run streamlit run frontend/app.py
 ```
@@ -100,6 +115,9 @@ Compose を使う場合:
 docker compose -f infra/docker-compose.yml up
 ```
 
+- Next.js フロント: <http://localhost:3000>
+- API: <http://localhost:8000>
+
 ## 8. トラブルシューティング
 - 画像生成で失敗する（Gemini）
   - `GEMINI_API_KEY` が未設定、またはモデル名が無効の可能性。`GEMINI_IMAGE_MODEL` を確認。ローカル検証のみなら、tests ではモックを使用しています。
@@ -111,4 +129,3 @@ docker compose -f infra/docker-compose.yml up
 ## 9. 参考
 - 仕様: docs/SPEC.md
 - ディレクトリ: docs/dir.md / docs/architecture.md
-
