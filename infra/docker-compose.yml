@@ -1,0 +1,38 @@
+version: "3.9"
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+    image: pca-api:latest
+    container_name: pca-api
+    ports:
+      - "8000:8000"
+    env_file:
+      - ../.env
+    environment:
+      - STATIC_DIR=/app/app/static
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://localhost:4000}
+    volumes:
+      - ../app/static:/app/app/static
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.frontend
+    image: pca-frontend:latest
+    container_name: pca-frontend
+    depends_on:
+      - api
+    ports:
+      - "3000:3000"
+    env_file:
+      -  ../.env
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL:-http://api:8000}
+      - POC_ACCESS_PASSWORD=${POC_ACCESS_PASSWORD:-mitou2025}
+      - PORT=3000
+    restart: unless-stopped

@@ -1,0 +1,10 @@
+{
+  "weights": {
+    "Appeal": 0.25,
+    "BrandFit": 0.25,
+    "Originality": 0.2,
+    "Clarity": 0.2,
+    "CulturalSensitivity": 0.1
+  },
+  "scale": "0 to 5"
+}

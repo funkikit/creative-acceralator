@@ -1,0 +1,16 @@
+.git
+.github
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.mypy_cache
+.pytest_cache
+infra/.env
+node_modules
+frontend-next/node_modules
+frontend-next/.next
+dist
+build
+.DS_Store

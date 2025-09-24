@@ -1,0 +1,36 @@
+# uv 用 (PEP 621)
+
+[project]
+name = "creative-validation-poc"
+version = "0.2.0"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi[standard]",
+  "uvicorn[standard]",
+  "pydantic>=2",
+  "sqlalchemy",
+  "httpx",
+  "streamlit",
+  "python-dotenv",
+  "structlog",
+  "pandas",
+  "numpy",
+  "plotly",
+  "pytest",
+  "google-generativeai",
+  "google-genai",
+  "openai"
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.format]
+quote-style = "double"
+
+# Keep flake8 consistent with Ruff/Black settings
+[tool.flake8]
+max-line-length = 100
+# Black-compatible: avoid conflicting whitespace rules
+extend-ignore = ["E203", "W503"]
