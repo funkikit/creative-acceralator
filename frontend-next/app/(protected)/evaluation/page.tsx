@@ -115,7 +115,7 @@ function createRandomPersonas(count: number): PersonaRow[] {
     return {
       ...template,
       id: randomId(index),
-      extras: template.extras ? { ...template.extras } : undefined,
+      extras: undefined, // DEFAULT_PERSONAS には extras がないため undefined
     };
   });
 }

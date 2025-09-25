@@ -8,48 +8,31 @@ RUN npm ci
 FROM node:20-alpine AS builder
 WORKDIR /app
 
-# Copy frontend-next files explicitly to ensure lib directory is included
-COPY frontend-next/package.json ./
-COPY frontend-next/next.config.mjs ./
-COPY frontend-next/tsconfig.json ./
-COPY frontend-next/tailwind.config.ts ./
-COPY frontend-next/postcss.config.mjs ./
-COPY frontend-next/middleware.ts ./
-COPY frontend-next/.env.example ./
-COPY frontend-next/next-env.d.ts ./
-
-# Copy directories
-COPY frontend-next/app/ ./app/
-COPY frontend-next/components/ ./components/
-COPY frontend-next/styles/ ./styles/
-
-# Copy lib directory
-COPY frontend-next/lib/ ./lib/
+# Copy all frontend-next content (lib directoryは Git 管理済み)
+COPY frontend-next/ ./
+RUN rm -rf node_modules .next .git .env.local
 
 # Copy the installed node_modules from deps stage
 COPY --from=deps /app/node_modules ./node_modules
 
-ENV NEXT_TELEMETRY_DISABLED=1
-
-# Debug: Verify lib directory and api.ts exist
-RUN echo "=== Directory structure ===" && \
-    ls -la && \
-    echo "=== lib directory ===" && \
-    ls -la lib/ && \
-    echo "=== lib/api.ts content ===" && \
-    head -10 lib/api.ts
+ARG NEXT_PUBLIC_API_BASE_URL
+ENV NEXT_TELEMETRY_DISABLED=1 \
+    NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
 
 RUN npm run build
 
 # Stage 3: production runtime
 FROM node:20-alpine AS runner
 WORKDIR /app
+ARG NEXT_PUBLIC_API_BASE_URL
 ENV NODE_ENV=production \
-    NEXT_TELEMETRY_DISABLED=1
+    NEXT_TELEMETRY_DISABLED=1 \
+    NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
 
-# Copy built assets
-COPY --from=builder /app/public ./public
+# Copy built assets (public ディレクトリが存在しない場合は空で作成)
 COPY --from=builder /app/.next ./.next
+RUN mkdir -p ./public
+COPY --from=builder /app/public ./public
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/next.config.mjs ./next.config.mjs
 COPY --from=builder /app/tsconfig.json ./tsconfig.json

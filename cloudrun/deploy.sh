@@ -111,7 +111,9 @@ normalise_secret_name() {
 read_env_file() {
   local env_file="$1"
   while IFS= read -r line || [[ -n "${line}" ]]; do
-    line="$(trim "${line%}")"
+    line="${line%$'\r'}"
+    line="${line%$'\n'}"
+    line="$(trim "${line}")"
     [[ -z "${line}" || "${line}" == \#* ]] && continue
     if [[ "${line}" != *"="* ]]; then
       echo "[deploy] Skipping malformed line in ${env_file}: ${line}" >&2
@@ -127,6 +129,19 @@ read_env_file() {
     fi
     printf '%s\t%s\n' "${key}" "${value}"
   done < "${env_file}"
+}
+
+
+get_env_value() {
+  local env_file="$1"
+  local target_key="$2"
+  while IFS=$'\t' read -r key value; do
+    if [[ "${key}" == "${target_key}" ]]; then
+      printf '%s\n' "${value}"
+      return 0
+    fi
+  done < <(read_env_file "${env_file}")
+  return 1
 }
 
 ensure_services_enabled() {
@@ -205,7 +220,8 @@ get_service_value() {
   local suffix="$2"
   local fallback_var="$3"
   local service_var
-  service_var="${service^^}_${suffix}"
+  # Convert service to uppercase using tr for better compatibility
+  service_var="$(echo "${service}" | tr '[:lower:]' '[:upper:]')_${suffix}"
   if [[ -n "${!service_var-}" ]]; then
     echo "${!service_var}"
   elif [[ -n "${fallback_var}" && -n "${!fallback_var-}" ]]; then
@@ -218,7 +234,31 @@ build_image() {
   local dockerfile_rel="$2"
   local image_url="$3"
   local context_path="$4"
+  local build_args_list="$5"
+  local env_file="$6"
   echo "[deploy] Building ${service} image ${image_url}:${IMAGE_TAG}"
+
+  local build_cmd
+  build_cmd="docker build -t '${image_url}:${IMAGE_TAG}' -f '${dockerfile_rel}'"
+
+  if [[ -n "${build_args_list}" && -n "${env_file}" ]]; then
+    IFS=',' read -ra build_keys <<< "${build_args_list}"
+    for raw_key in "${build_keys[@]}"; do
+      local key
+      key="$(trim "${raw_key}")"
+      [[ -z "${key}" ]] && continue
+      local value
+      if value="$(get_env_value "${env_file}" "${key}")"; then
+        local escaped
+        escaped="$(printf '%q' "${value}")"
+        build_cmd+=" --build-arg ${key}=${escaped}"
+      else
+        echo "[deploy] Warning: build arg ${key} not found in ${env_file}" >&2
+      fi
+    done
+  fi
+
+  build_cmd+=" ."
 
   local tmp_config
   tmp_config="$(mktemp)"
@@ -232,7 +272,7 @@ steps:
     - '-c'
     - |
         printf '%s' "$$DOCKERHUB_PASSWORD" | docker login -u "$$DOCKERHUB_USERNAME" --password-stdin
-        docker build -t '${image_url}:${IMAGE_TAG}' -f '${dockerfile_rel}' .
+        ${build_cmd}
 images:
 - '${image_url}:${IMAGE_TAG}'
 availableSecrets:
@@ -246,7 +286,11 @@ EOF
     cat >"${tmp_config}" <<EOF
 steps:
 - name: 'gcr.io/cloud-builders/docker'
-  args: ['build', '-t', '${image_url}:${IMAGE_TAG}', '-f', '${dockerfile_rel}', '.']
+  entrypoint: 'bash'
+  args:
+    - '-c'
+    - |
+        ${build_cmd}
 images:
 - '${image_url}:${IMAGE_TAG}'
 EOF
@@ -311,7 +355,16 @@ deploy_service() {
     [[ -n "${vpc_egress}" ]] && deploy_args+=("--vpc-egress=${vpc_egress}")
   fi
 
-  mapfile -t secret_entries < <(collect_secret_flags "${env_file}" "${secret_prefix}")
+  # Use more compatible method instead of mapfile
+  local secret_entries_raw secret_entries=()
+  secret_entries_raw=$(collect_secret_flags "${env_file}" "${secret_prefix}")
+  if [[ -n "${secret_entries_raw}" ]]; then
+    # Read entries into array using a while loop for better compatibility
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && secret_entries+=("$line")
+    done <<< "${secret_entries_raw}"
+  fi
+  
   if ((${#secret_entries[@]})); then
     local secret_flag
     secret_flag=$(IFS=,; echo "${secret_entries[*]}")
@@ -363,7 +416,7 @@ main() {
         fi
         local api_dockerfile_rel
         api_dockerfile_rel="$(relative_to_project_root "${api_dockerfile_path}")"
-        build_image "api" "${api_dockerfile_rel}" "${API_IMAGE_URL}" "${PROJECT_ROOT}"
+        build_image "api" "${api_dockerfile_rel}" "${API_IMAGE_URL}" "${PROJECT_ROOT}" "${API_BUILD_ARGS:-}" "${api_env_path}"
         deploy_service "api" "${API_SERVICE_NAME}" "${API_IMAGE_URL}" "${api_env_path}" "${API_SECRET_PREFIX}" "${API_STATIC_ENV_VARS}" "${API_PORT}"
         ;;
       frontend)
@@ -379,7 +432,7 @@ main() {
         fi
         local frontend_dockerfile_rel
         frontend_dockerfile_rel="$(relative_to_project_root "${frontend_dockerfile_path}")"
-        build_image "frontend" "${frontend_dockerfile_rel}" "${FRONTEND_IMAGE_URL}" "${PROJECT_ROOT}"
+        build_image "frontend" "${frontend_dockerfile_rel}" "${FRONTEND_IMAGE_URL}" "${PROJECT_ROOT}" "${FRONTEND_BUILD_ARGS:-}" "${frontend_env_path}"
         deploy_service "frontend" "${FRONTEND_SERVICE_NAME}" "${FRONTEND_IMAGE_URL}" "${frontend_env_path}" "${FRONTEND_SECRET_PREFIX}" "${FRONTEND_STATIC_ENV_VARS}" "${FRONTEND_PORT}"
         ;;
     esac

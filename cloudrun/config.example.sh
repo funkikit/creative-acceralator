@@ -36,6 +36,10 @@ export FRONTEND_DOCKERFILE="infra/Dockerfile.frontend"
 export API_STATIC_ENV_VARS=""
 export FRONTEND_STATIC_ENV_VARS=""
 
+# Optional build args (comma-separated env keys read from the env file during docker build)
+export API_BUILD_ARGS=""
+export FRONTEND_BUILD_ARGS="NEXT_PUBLIC_API_BASE_URL"
+
 # Optional Docker Hub credentials (store username/password in Secret Manager)
 # export DOCKER_HUB_USERNAME_SECRET="docker-hub-username"
 # export DOCKER_HUB_PASSWORD_SECRET="docker-hub-password"

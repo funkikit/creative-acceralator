@@ -94,6 +94,7 @@ Cloud Build はデフォルトで Docker Hub に認証なしでアクセスし�
    export DOCKER_HUB_USERNAME_SECRET="docker-hub-username"
    export DOCKER_HUB_PASSWORD_SECRET="docker-hub-password"
    ```
+4. フロントエンドのビルドに環境変数を渡したい場合は、`FRONTEND_BUILD_ARGS="NEXT_PUBLIC_API_BASE_URL"` のようにキーを列挙します（カンマ区切り）。値は `cloudrun/frontend.env` から読み取られ、`docker build --build-arg` として渡されます。
 
 設定を反映すると、デプロイスクリプトが Cloud Build のビルドステップで自動的に `docker login` を実行し、Docker Hub からベースイメージを取得できるようになります。
 
@@ -104,7 +105,10 @@ Secret Manager に同期する値を `cloudrun` ディレクトリ内の下記�
 - バックエンド: `cloudrun/app.env`
 - フロントエンド: `cloudrun/frontend.env`
 
-形式は `KEY=value` を 1 行ずつ記載します。`#` で始まる行は無視されます。`${GCS_BUCKET}` のようなプレースホルダーは、Secret Manager に保存する際に解決済みの値へ置き換えてください。
+形式は `KEY=value` を 1 行ずつ記載します。`#` で始まる行は無視されます。`${GCS_BUCKET}` のようなプレースホルダーは Secret Manager に保存する前に最終値へ置き換えてください。
+
+- `CORS_ORIGINS` には実際に公開されるフロントエンドの URL（例: `https://pca-frontend-xxxx.run.app`）を指定します。
+- `NEXT_PUBLIC_API_BASE_URL` には Cloud Run API の URL（例: `https://pca-api-xxxx.run.app`）を指定します。フロントエンドのビルド時にもこの値を使用します。
 
 ## 7. デプロイ設定ファイルの作成
 
@@ -119,6 +123,7 @@ Secret Manager に同期する値を `cloudrun` ディレクトリ内の下記�
    - `API_SERVICE_NAME`, `FRONTEND_SERVICE_NAME`
    - `API_SECRET_PREFIX`, `FRONTEND_SECRET_PREFIX`
    - 必要に応じて `API_SERVICE_ACCOUNT`, `FRONTEND_SERVICE_ACCOUNT`, VPC 接続、リソースサイズなどを上書きします。
+   - フロントエンドのビルドに API URL を埋め込みたい場合は `FRONTEND_BUILD_ARGS="NEXT_PUBLIC_API_BASE_URL"` をセットします。
 3. ステップ 4 でサービスアカウントを作成した場合は、このファイルに記載して Cloud Run 実行時のアイデンティティとして指定してください。
 
 シークレット名は `<prefix>-<env_key_in_lowercase>` 形式（例: `pca-api-openai-api-key`）で作成されます。プレフィックスを安易に変更すると使われないシークレットが残ってしまうため注意してください。

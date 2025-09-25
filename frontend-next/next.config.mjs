@@ -2,7 +2,8 @@
 const nextConfig = {
   reactStrictMode: true,
   experimental: {
-    typedRoutes: true
+    // typedRoutes は実験的機能で型エラーを引き起こすため無効化
+    // typedRoutes: true
   }
 };
 
