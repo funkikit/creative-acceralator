@@ -7,9 +7,38 @@ RUN npm ci
 # Stage 2: build application
 FROM node:20-alpine AS builder
 WORKDIR /app
+
+# Copy frontend-next files explicitly to ensure lib directory is included
+COPY frontend-next/package.json ./
+COPY frontend-next/next.config.mjs ./
+COPY frontend-next/tsconfig.json ./
+COPY frontend-next/tailwind.config.ts ./
+COPY frontend-next/postcss.config.mjs ./
+COPY frontend-next/middleware.ts ./
+COPY frontend-next/.env.example ./
+COPY frontend-next/next-env.d.ts ./
+
+# Copy directories
+COPY frontend-next/app/ ./app/
+COPY frontend-next/components/ ./components/
+COPY frontend-next/styles/ ./styles/
+
+# Copy lib directory
+COPY frontend-next/lib/ ./lib/
+
+# Copy the installed node_modules from deps stage
 COPY --from=deps /app/node_modules ./node_modules
-COPY frontend-next .
+
 ENV NEXT_TELEMETRY_DISABLED=1
+
+# Debug: Verify lib directory and api.ts exist
+RUN echo "=== Directory structure ===" && \
+    ls -la && \
+    echo "=== lib directory ===" && \
+    ls -la lib/ && \
+    echo "=== lib/api.ts content ===" && \
+    head -10 lib/api.ts
+
 RUN npm run build
 
 # Stage 3: production runtime

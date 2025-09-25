@@ -6,7 +6,7 @@ import {
   fetchVariationVariables,
   generateVariations,
   generateImages,
-} from "../../../lib/api";
+} from "lib/api";
 import clsx from "clsx";
 
 function parseMultiLine(value: string): string[] {

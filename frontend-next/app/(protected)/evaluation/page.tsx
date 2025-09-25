@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
-import { fetchSummary, runValidation, fetchValidationProgress } from "../../../lib/api";
+import { fetchSummary, runValidation, fetchValidationProgress } from "lib/api";
 
 const DEFAULT_PERSONAS = [
   {

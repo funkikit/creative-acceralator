@@ -20,6 +20,11 @@
       "node"
     ],
     "baseUrl": ".",
+    "paths": {
+      "lib/*": ["lib/*"],
+      "components/*": ["components/*"],
+      "app/*": ["app/*"]
+    },
     "incremental": true,
     "plugins": [
       {
